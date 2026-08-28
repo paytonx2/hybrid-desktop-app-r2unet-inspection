@@ -197,7 +197,7 @@ dist/R2UNET_Inspection_Pro/
 
 ---
 
-## 6) ข้อกำกับตามคำขอ
+## 6) ข้อกำกับของงาน
 
 * ตรรกะการคำนวณทั้งหมด ได้แก่:
 
@@ -210,8 +210,6 @@ dist/R2UNET_Inspection_Pro/
   * การหา Contour
   * การวาดกรอบ `MISSING`
 
-  **คัดลอกมาจาก Backend เดิมแบบคำต่อคำ ไม่มีการแก้ไข**
-
   โดยอยู่ในไฟล์:
 
   ```text
@@ -221,6 +219,6 @@ dist/R2UNET_Inspection_Pro/
 
 * สถาปัตยกรรมถูกแยกเป็น **UI / Camera / AI / Database / Controller** ตามที่ร้องขอ
 
-* ระบบทำงานแบบ **Local ทั้งหมด**
+* ระบบทำงานแบบ **Hybrid Desktop App + Dashboard**
 
-* ไม่ต้องพึ่งพา **Hugging Face API** หรือ Internet ในการทำงานหลักอีกต่อไป
+* ไม่จำเป็นต้องพึ่งพา Internet
