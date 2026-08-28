@@ -1,114 +1,169 @@
 # R2U-NET Inspection Pro — Desktop (Offline)
 
-แปลงระบบจาก Web (HuggingFace + Vercel) ใหเ้ป็น **Desktop App ทที่ ำ งานในเครอื่งทงั้หมด**
-ไมต่ อ้ งใช ้internet หรอื server ภายนอกในการทำ งานหลกัอกีตอ่ ไป
-ตรรกะการคำนวณ (dice_coeff, dice_loss, combined_loss, preprocessing, contour, threshold)
-**คดั ลอกมาจาก backend เดมิ แบบ 1:1 ไมม่ กีารแกไ้ข**
+แปลงระบบจาก Web (Hugging Face + Vercel) ให้เป็น **Desktop App ที่ทำงานภายในเครื่องทั้งหมด**
+
+ไม่ต้องใช้งาน Internet หรือ Server ภายนอกในการทำงานหลักอีกต่อไป
+
+ตรรกะการคำนวณ (`dice_coeff`, `dice_loss`, `combined_loss`, preprocessing, contour, threshold)
+
+**คัดลอกมาจาก Backend เดิมแบบ 1:1 ไม่มีการแก้ไข**
 
 ---
 
-## 1) โครงสรา้งโปรเจกต์
+## 1) โครงสร้างโปรเจกต์
 
-```
+```text
 r2unet_desktop/
-├── main.py                  ← จุดเรมิ่ตน้ โปรแกรม (รันไฟลน์ ี้)
+
+├── main.py                         ← จุดเริ่มต้นโปรแกรม (รันไฟล์นี้)
 ├── requirements.txt
-├── models/                  ← ★ เอาไฟลโ์มเดล .h5 มาวางตรงนี้ ★
+
+├── models/                         ← ★ เอาไฟล์โมเดล .h5 มาวางตรงนี้ ★
 │   ├── defect_model.h5
 │   └── r2unet__model_underbody_screw.h5
+
 ├── data/
-│   └── inspections.db       ← SQLite (สรา้งอตัโนมตั เิมอื่ รันครัง้แรก)
+│   └── inspections.db              ← SQLite (สร้างอัตโนมัติเมื่อรันครั้งแรก)
+
 ├── core/
-│   ├── losses.py            ← dice_coeff / dice_loss / combined_loss (หา้มแก)้
-│   ├── model_manager.py     ← โหลด/เกบ็ โมเดลทงั้ 2 ตวัในหน่วยความจำ
-│   ├── inference.py         ← logic การ predict (คดัลอกจาก Flask /predict เดมิ )
-│   ├── model_load_worker.py ← thread โหลดโมเดลตอนเปิดโปรแกรม
-│   └── batch_worker.py      ← thread ประมวลผลรปูภาพหลายไฟล์
+│   ├── losses.py                   ← dice_coeff / dice_loss / combined_loss (ห้ามแก้)
+│   ├── model_manager.py            ← โหลด/เก็บโมเดลทั้ง 2 ตัวในหน่วยความจำ
+│   ├── inference.py                ← Logic การ Predict (คัดลอกจาก Flask /predict เดิม)
+│   ├── model_load_worker.py        ← Thread โหลดโมเดลตอนเปิดโปรแกรม
+│   └── batch_worker.py             ← Thread ประมวลผลรูปภาพหลายไฟล์
+
 ├── camera/
-│   └── camera_worker.py     ← thread อา่ นภาพจากกลอ้ ง/วดิโีอ + เรยีก inference
+│   └── camera_worker.py            ← Thread อ่านภาพจากกล้อง/วิดีโอ + เรียก Inference
+
 ├── database/
-│   └── db_manager.py        ← SQLite: บนั ทกึประวตั /ิ export CSV
+│   └── db_manager.py               ← SQLite: บันทึกประวัติ / Export CSV
+
 └── ui/
-    ├── main_window.py       ← หนา้ตาโปรแกรมหลกั (PySide6)
-    └── utils.py              ← แปลงภาพ OpenCV → Qt
+    ├── main_window.py              ← หน้าตาโปรแกรมหลัก (PySide6)
+    └── utils.py                    ← แปลงภาพ OpenCV → Qt
 ```
 
-สถาปตัยกรรมแยกเป็นสว่ น ๆ (UI / Camera / AI / Database / Controller) ตามทตี่ อ้ งการ
-ทำ ใหอ้ นาคตถา้อยากเพมิ่โมเดลใหม่, เปลยี่ น UI, หรอืเปลยี่ นฐานขอ้มลู ทำ ไดโ้ดยไมก่ ระทบสว่ นอนื่
+สถาปัตยกรรมถูกแยกเป็นส่วน ๆ ได้แก่ **UI / Camera / AI / Database / Controller** ตามที่ต้องการ
+
+ทำให้ในอนาคต หากต้องการเพิ่มโมเดลใหม่ เปลี่ยน UI หรือเปลี่ยนฐานข้อมูล ก็สามารถทำได้โดยไม่กระทบกับส่วนอื่น
 
 ---
 
-## 2) สงิ่ ทตี่อ้งตดิตัง้ (ทำ ครัง้เดยีว)
+## 2) สิ่งที่ต้องติดตั้ง (ทำครั้งเดียว)
 
-เปิด VS Code → เปิด Terminal (Ctrl+`) แลว้ รันตามลำดบั:
+เปิด VS Code → เปิด Terminal (`Ctrl + ``) แล้วรันตามลำดับ:
 
 ```bash
-# 1. แนะนำใหส้ รา้ง virtual environment กอ่ น (กนัไลบรารชีนกบัโปรเจกตอ์ นื่)
+# 1. แนะนำให้สร้าง Virtual Environment ก่อน
+#    เพื่อป้องกัน Library ชนกับโปรเจกต์อื่น
 python -m venv venv
 
-# 2. เปิดใชง้าน venv
+# 2. เปิดใช้งาน venv
 venv\Scripts\activate        # Windows
 source venv/bin/activate     # macOS / Linux
 
-# 3. ตดิตงั้ไลบรารที งั้หมด
+# 3. ติดตั้ง Library ทั้งหมด
 pip install -r requirements.txt
 ```
 
-> หมายเหตุ: ถา้เครอื่งมกีารด์ จอ NVIDIA และตอ้งการใหร้ นัเร็วขนึ้ดว้ ย GPU
-> ตอ้งตดิตงั้ `tensorflow` เวอรช์ นั ทรี่ องรับ CUDA/cuDNN แยกตา่ งหาก (ไมบ่ งัคบั เครอื่งไมม่ กีาร์
-> จอกร็ นัไดป้ กตดิว้ ย CPU เพยีงชา้กวา่)
+> **หมายเหตุ:** หากเครื่องมีการ์ดจอ NVIDIA และต้องการให้รันเร็วขึ้นด้วย GPU
 >
-> **สำคญั:** ไฟล ์`.h5` ทเี่ทรนดว้ ย Keras รนุ่ ใหม ่(Keras 3) จะโหลดไมไ่ดถ้ า้ tensorflow เกา่ เกนิ ไป
-> (จะขนึ้ error ประมาณ `Unrecognized keyword arguments: ['batch_shape']`) — `requirements.txt`
-> นบี้ งัคบั `tensorflow>=2.16` ไวแ้ ลว้ เพอื่ แกป้ ัญหานี้ ถา้ยงัเจอ error นี้อยใู่หร้ นั
-> `pip install --upgrade tensorflow` อกีครัง้
+> ต้องติดตั้ง `tensorflow` เวอร์ชันที่รองรับ CUDA/cuDNN แยกต่างหาก (ไม่บังคับ เครื่องที่ไม่มีการ์ดจอก็รันได้ตามปกติด้วย CPU เพียงแต่จะช้ากว่า)
 
-VS Code Extension ทแี่นะนำ: **Python** (Microsoft) และ **Pylance**
+> **สำคัญ:** ไฟล์ `.h5` ที่เทรนด้วย Keras รุ่นใหม่ (Keras 3) อาจโหลดไม่ได้หากใช้ TensorFlow รุ่นเก่าเกินไป
+>
+> อาจพบ Error ประมาณ:
+>
+> `Unrecognized keyword arguments: ['batch_shape']`
+>
+> `requirements.txt` นี้กำหนด `tensorflow>=2.16` ไว้แล้วเพื่อช่วยแก้ปัญหานี้ หากยังพบ Error ดังกล่าว ให้รัน:
+>
+> ```bash
+> pip install --upgrade tensorflow
+> ```
+
+VS Code Extension ที่แนะนำ:
+
+* **Python** (Microsoft)
+* **Pylance**
 
 ---
 
-## 3) นำ โมเดลของคณุ มาวาง
+## 3) นำโมเดลของคุณมาวาง
 
-คดัลอกไฟล์
-```
+คัดลอกไฟล์:
+
+```text
 defect_model.h5
 r2unet__model_underbody_screw.h5
 ```
-ไปวางไวใ้นโฟลเดอร ์`models/` (ชอื่ ไฟลต์ อ้งตรงเป๊ะตามนี้ — ถา้ชอื่ ไมต่ รง ใหแ้กช้อื่ ไฟล ์
-หรอืแกพ้าธใ์นฟังกช์นั `default_paths()` ในไฟล ์`core/model_manager.py`)
+
+ไปวางไว้ในโฟลเดอร์:
+
+```text
+models/
+```
+
+**ชื่อไฟล์ต้องตรงตามนี้ทุกตัวอักษร**
+
+หากชื่อไม่ตรง สามารถแก้ชื่อไฟล์ หรือแก้ Path ในฟังก์ชัน `default_paths()` ภายในไฟล์:
+
+```text
+core/model_manager.py
+```
 
 ---
 
-## 4) วธิรีนัโปรแกรม (ตอนพัฒนา)
+## 4) วิธีรันโปรแกรม (ตอนพัฒนา)
+
+รันคำสั่ง:
 
 ```bash
 python main.py
 ```
 
-โปรแกรมจะขนึ้หนา้ตา่ ง Desktop ทนั ท ีและเรมิ่โหลดโมเดลใน background (ดสูถานะไดท้ มี่ มุ บนซา้ ยของ
-Sidebar และใน System Terminal) พอโหลดเสร็จจะขนึ้ "✅ โมเดลพรอ้ มใชง้าน"
+โปรแกรมจะเปิดหน้าต่าง Desktop ทันที และเริ่มโหลดโมเดลใน Background
 
-ฟังกช์นั หลกัทมี่ อียใู่นโปรแกรมนี้(ตรงตามโค็ดเว็บทใี่หไ้ปทกุ ประการ):
+สามารถดูสถานะได้ที่:
 
-- เลอืกโมเดล (Pipe Staple / Underbody Screw)
-- ตงั้คา่ Pixel Threshold และ Confidence
-- เปิดกลอ้ ง (เลอืกกลอ้ งไดถ้ า้มมีากกวา่ 1 ตวั) หรอืเปิดไฟลว์ดิโีอ
-- กด Run AI Analysis เพอื่ วเิคราะหแ์บบ real-time พรอ้มกรอบ "MISSING" และสถานะ GOOD/MISSING
-- อพัโหลดรปูภาพหลายไฟลพ์รอ้มกนั (Batch) พรอ้มแสดงภาพตน้ ฉบบั /ผลลพัธค์ กู่นั
-- บนั ทกึทกุ ผลตรวจสอบลง SQLite อตัโนมตั ิ(เมอื่ พบ MISSING)
-- ดปูระวตั กิารตรวจสอบทงั้หมดในแทป็ "ประวตั กิารตรวจสอบ"
-- Export CSV Report
+* มุมบนซ้ายของ Sidebar
+* System Terminal
+
+เมื่อโหลดโมเดลเสร็จ จะขึ้นข้อความ:
+
+```text
+✅ โมเดลพร้อมใช้งาน
+```
+
+### ฟังก์ชันหลักที่มีอยู่ในโปรแกรม
+
+ฟังก์ชันทั้งหมดตรงตามโค้ด Web เดิมที่ให้ไว้:
+
+* เลือกโมเดล (Pipe Staple / Underbody Screw)
+* ตั้งค่า Pixel Threshold และ Confidence
+* เปิดกล้อง (เลือกกล้องได้หากมีมากกว่า 1 ตัว)
+* เปิดไฟล์วิดีโอ
+* กด **Run AI Analysis** เพื่อวิเคราะห์แบบ Real-time
+* แสดงกรอบ **MISSING** และสถานะ **GOOD / MISSING**
+* อัปโหลดรูปภาพหลายไฟล์พร้อมกัน (Batch)
+* แสดงภาพต้นฉบับและผลลัพธ์คู่กัน
+* บันทึกผลการตรวจสอบลง SQLite โดยอัตโนมัติ (เมื่อพบ `MISSING`)
+* ดูประวัติการตรวจสอบทั้งหมดในแท็บ **ประวัติการตรวจสอบ**
+* Export CSV Report
 
 ---
 
-## 5) การ Build เป็นไฟล ์.exe (สำหรบันำ ไปตดิตงั้เครอื่ งหนา้งาน)
+## 5) การ Build เป็นไฟล์ `.exe` (สำหรับนำไปติดตั้งเครื่องหน้างาน)
 
-ตดิตงั้ PyInstaller:
+ติดตั้ง PyInstaller:
+
 ```bash
 pip install pyinstaller
 ```
 
-จากนัน้ รนัคำสงั่ (รนัในโฟลเดอรโ์ปรเจกต ์เดยีวกบั main.py):
+จากนั้นรันคำสั่งต่อไปนี้ในโฟลเดอร์โปรเจกต์เดียวกับ `main.py`:
+
+### Windows
 
 ```bash
 pyinstaller --noconfirm --onedir --windowed ^
@@ -117,20 +172,57 @@ pyinstaller --noconfirm --onedir --windowed ^
   main.py
 ```
 
-(บน macOS/Linux ใหเ้ปลยี่ น `;` เป็น `:` ในพารามเิตอร ์`--add-data` และเปลยี่ น `^` เป็น `\`)
+### macOS / Linux
 
-ผลลพัธจ์ ะอยใู่ น `dist/R2UNET_Inspection_Pro/` — คดัลอกทงั้โฟลเดอรน์ ไี้ปตดิตงั้บนเครอื่งคอมพวิเตอร์
-หนา้งานไดเ้ลย โดยไมต่ อ้งตดิตงั้ Python หรอืตอ่ internet เพราะทกุอยา่ งรวมอยใู่นโฟลเดอรน์ ั้นแลว้
+ให้เปลี่ยน `;` เป็น `:` ในพารามิเตอร์ `--add-data` และเปลี่ยน `^` เป็น `\`
 
-> ขอ้ควรระวงั: ไฟลโ์มเดล .h5 มขี นาดใหญ่ ขนาดไฟลต์ ดิตงั้สดุ ทา้ยจะใหญต่ ามไปดว้ ย (ปกตขิอง
-> การรวม TensorFlow + โมเดลไวใ้นตวั)
+ตัวอย่าง:
+
+```bash
+pyinstaller --noconfirm --onedir --windowed \
+  --name "R2UNET_Inspection_Pro" \
+  --add-data "models:models" \
+  main.py
+```
+
+ผลลัพธ์จะอยู่ที่:
+
+```text
+dist/R2UNET_Inspection_Pro/
+```
+
+สามารถคัดลอกทั้งโฟลเดอร์นี้ไปติดตั้งบนคอมพิวเตอร์หน้างานได้เลย
+
+โดย **ไม่จำเป็นต้องติดตั้ง Python เพิ่ม** และไม่ต้องเชื่อมต่อ Internet สำหรับการทำงานหลัก เพราะ Library และโมเดลที่จำเป็นถูกรวมอยู่ในโฟลเดอร์แล้ว
+
+> **ข้อควรระวัง:** ไฟล์โมเดล `.h5` มีขนาดใหญ่ ดังนั้นขนาดไฟล์ติดตั้งสุดท้ายจะใหญ่ตามไปด้วย ซึ่งเป็นเรื่องปกติสำหรับการรวม TensorFlow และโมเดลไว้ในตัวโปรแกรม
 
 ---
 
-## 6) ขอ้ทกี่ ำ กบัไวต้ ามคำ ขอ
+## 6) ข้อกำกับตามคำขอ
 
-- ตรรกะคำนวณทงั้หมด (`dice_coeff`, `dice_loss`, `combined_loss`, ขนั้ตอน preprocessing/resize
-  128x128, การ threshold ดว้ ย confidence, การหา contour และวาดกรอบ MISSING) **คดัลอกมาจาก
-  backend เดมิ แบบคำตอ่ คำ ไมม่ กีารแกไ้ข** อยใู่นไฟล ์`core/losses.py` และ `core/inference.py`
-- สถาปตัยกรรมแยกเป็น UI / Camera / AI / Database / Controller ตามทรี่ อ้ งขอ
-- ทำ งานแบบ local ทงั้หมด ไมต่ อ้ งพงึ่ Hugging Face API หรอื internet อกีตอ่ ไป
+* ตรรกะการคำนวณทั้งหมด ได้แก่:
+
+  * `dice_coeff`
+  * `dice_loss`
+  * `combined_loss`
+  * ขั้นตอน Preprocessing
+  * Resize `128x128`
+  * การ Threshold ด้วย Confidence
+  * การหา Contour
+  * การวาดกรอบ `MISSING`
+
+  **คัดลอกมาจาก Backend เดิมแบบคำต่อคำ ไม่มีการแก้ไข**
+
+  โดยอยู่ในไฟล์:
+
+  ```text
+  core/losses.py
+  core/inference.py
+  ```
+
+* สถาปัตยกรรมถูกแยกเป็น **UI / Camera / AI / Database / Controller** ตามที่ร้องขอ
+
+* ระบบทำงานแบบ **Local ทั้งหมด**
+
+* ไม่ต้องพึ่งพา **Hugging Face API** หรือ Internet ในการทำงานหลักอีกต่อไป
