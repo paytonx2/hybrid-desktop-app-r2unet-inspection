@@ -1,0 +1,65 @@
+name: CT - Retrain & Evaluate Candidate Model
+
+# Manually triggered from the Actions tab (Run workflow button).
+# Not on a schedule/push, on purpose: retraining should be a deliberate
+# decision, and the resulting candidate model still needs a human to look
+# at the evaluation gate result before it ever reaches models/ in production.
+on:
+  workflow_dispatch:
+    inputs:
+      model_target:
+        description: 'Which model to retrain'
+        required: true
+        default: 'defect'
+        type: choice
+        options:
+          - defect
+          - tank_screw
+
+jobs:
+  retrain-and-evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # TODO (you): replace this with a real step that pulls your labeled
+      # training/validation data, e.g. `dvc pull` or downloading from
+      # Supabase Storage / a bucket. Until then this pipeline is a runnable
+      # scaffold, not a working retrain — see training/retrain.py TODOs.
+      - name: Fetch training & validation data
+        run: echo "TODO: fetch training/data/train and training/data/val from your data source"
+
+      - name: Retrain candidate model
+        run: |
+          python training/retrain.py \
+            --train-dir training/data/train \
+            --output training/output/candidate_${{ inputs.model_target }}_model.h5
+
+      - name: Evaluate candidate vs current production model
+        run: |
+          python training/evaluate.py \
+            --current models/${{ inputs.model_target }}_model.h5 \
+            --candidate training/output/candidate_${{ inputs.model_target }}_model.h5 \
+            --val-dir training/data/val
+
+      - name: Upload candidate model for human review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ inputs.model_target }}-model
+          path: training/output/candidate_${{ inputs.model_target }}_model.h5
+
+      # NOTE: there is deliberately no step here that copies the candidate
+      # into models/ and pushes it. Promoting a model to production is a
+      # manual decision: download the artifact above, verify it yourself,
+      # then replace the .h5 file and go through the normal CD release flow.

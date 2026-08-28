@@ -1,0 +1,20 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# app data / large binaries - do not commit these to GitHub
+models/*.h5
+data/*.db
+build/
+dist/
+*.spec
+
+# node / dashboard
+dashboard/node_modules/
+dashboard/.next/
+dashboard/.vercel/
