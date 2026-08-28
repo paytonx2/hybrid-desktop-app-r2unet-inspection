@@ -6,8 +6,6 @@
 
 ตรรกะการคำนวณ (`dice_coeff`, `dice_loss`, `combined_loss`, preprocessing, contour, threshold)
 
-**คัดลอกมาจาก Backend เดิมแบบ 1:1 ไม่มีการแก้ไข**
-
 ---
 
 ## 1) โครงสร้างโปรเจกต์
