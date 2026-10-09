@@ -1,11 +1,14 @@
-# secrets
+# secrets (keep the *.example templates)
 .env
+.env.local
+.env.*.local
 
 # python
 __pycache__/
 *.pyc
 venv/
 .venv/
+.pytest_cache/
 
 # app data / large binaries - do not commit these to GitHub
 models/*.h5
@@ -14,7 +17,12 @@ build/
 dist/
 *.spec
 
+# training datasets & candidate models (fetched in CI, see training/README.md)
+training/data/
+training/output/
+
 # node / dashboard
 dashboard/node_modules/
 dashboard/.next/
 dashboard/.vercel/
+dashboard/.env.local

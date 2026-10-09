@@ -1,5 +1,8 @@
 # CI/CT/CD Setup Guide — things only YOU can do
 
+> **Note:** the Thai version [`CICTCD_SETUP.md`](CICTCD_SETUP.md) is the maintained one and includes newer steps
+> (Supabase migration 001, the `models-v1` / `dataset-v1` releases, and repository secrets).
+
 Everything code-related is already written: the sync module, the dashboard,
 the Supabase schema, and all three GitHub Actions workflows. What's left is
 account creation, keys, and a few clicks — nobody else can do this part for
@@ -40,9 +43,9 @@ Keep this tab open, you'll copy these two values twice.
    ```
 4. Run the app (`python main.py`). Check the **System Terminal** panel in the sidebar — you should see:
    ```
-   ☁️ Cloud sync enabled — syncing in the background
+   Cloud sync enabled — syncing in the background
    ```
-   Run an inspection (upload an image or use the camera). Within ~15 seconds you should see `☁️ Synced 1 record(s) to Supabase` in the log.
+   Run an inspection (upload an image or use the camera). Within ~15 seconds you should see `Synced 1 record(s) to Supabase` in the log.
 5. Sanity check: in Supabase, go to **Table Editor → inspections** — your row should be there.
 
 **`.env` is already in `.gitignore` — never commit it.** It contains your keys.

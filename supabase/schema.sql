@@ -1,11 +1,13 @@
 -- ============================================================
 -- R2U-NET Inspection Pro — Supabase schema
 -- Run this once in: Supabase Dashboard → SQL Editor → New Query → Run
+-- (Already ran an older version? Run supabase/migrations/001_local_id_dedup.sql instead.)
 -- ============================================================
 
 create table if not exists inspections (
     id           bigint generated always as identity primary key,
     device_id    text not null,                 -- which local machine sent this
+    local_id     bigint,                        -- row id in that machine's SQLite (dedup key)
     ts           timestamptz not null default now(),  -- when the inspection happened
     source       text,                            -- "Live Camera" / "Video/Live" / filename
     model_type   text,                            -- "defect" / "tank_screw"
@@ -13,7 +15,8 @@ create table if not exists inspections (
     pixel_count  integer,
     conf_threshold real,
     px_threshold integer,
-    created_at   timestamptz not null default now()
+    created_at   timestamptz not null default now(),
+    constraint inspections_device_local_uniq unique (device_id, local_id)
 );
 
 -- Helpful index for the dashboard's "latest first" queries
@@ -29,11 +32,13 @@ create index if not exists inspections_created_at_idx
 -- ============================================================
 alter table inspections enable row level security;
 
+drop policy if exists "anon can insert inspections" on inspections;
 create policy "anon can insert inspections"
     on inspections for insert
     to anon
     with check (true);
 
+drop policy if exists "anon can read inspections" on inspections;
 create policy "anon can read inspections"
     on inspections for select
     to anon

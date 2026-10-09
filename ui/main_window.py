@@ -1,5 +1,6 @@
 import os
 import socket
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -25,6 +26,10 @@ MODEL_LABELS = {
     "defect": "Pipe Staple Model",
     "tank_screw": "Underbody Screw Model",
 }
+
+# Live camera/video produces ~30 results per second. While a defect stays in
+# view, log it at most once per this many seconds (plus every GOOD -> MISSING change).
+LIVE_LOG_COOLDOWN_SEC = 5
 
 # ---- Color palette (light / indigo theme) ----
 ACCENT = "#4f46e5"        # indigo
@@ -83,18 +88,18 @@ class ImageResultCard(QFrame):
     def set_result(self, pixmap, status, pixel_count):
         self.result_label.setPixmap(scale_pixmap_to_label(pixmap, self.result_label))
         if status == "MISSING":
-            self.status_label.setText(f"🚨 MISSING ({pixel_count} PX)")
+            self.status_label.setText(f"MISSING ({pixel_count} PX)")
             self.status_label.setStyleSheet(
                 f"background:{BAD_BG}; color:{BAD_TEXT}; padding:3px 10px; border-radius:10px; font-weight:700; font-size:11px;"
             )
         else:
-            self.status_label.setText("✅ GOOD")
+            self.status_label.setText("GOOD")
             self.status_label.setStyleSheet(
                 f"background:{GOOD_BG}; color:{GOOD_TEXT}; padding:3px 10px; border-radius:10px; font-weight:700; font-size:11px;"
             )
 
     def set_error(self):
-        self.status_label.setText("❌ ERROR")
+        self.status_label.setText("ERROR")
         self.status_label.setStyleSheet(
             f"background:{BAD_BG}; color:{BAD_TEXT}; padding:3px 10px; border-radius:10px; font-weight:700; font-size:11px;"
         )
@@ -118,7 +123,9 @@ class MainWindow(QMainWindow):
         self.camera_worker = None
         self.batch_worker = None
         self.current_source = None  # int camera index, or path string
-        self.pending_batch_cards = {}
+        self.batch_cards = []
+        self._last_live_status = None
+        self._last_live_log_time = 0.0
 
         self._build_ui()
         self._start_loading_models()
@@ -143,18 +150,18 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        title = QLabel("⚙️ Control Panel")
+        title = QLabel("Control Panel")
         title.setStyleSheet(f"color:{ACCENT}; font-size:20px; font-weight:800;")
         subtitle = QLabel("R2U-NET Segmentation System (Offline)")
         subtitle.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         layout.addWidget(title)
         layout.addWidget(subtitle)
 
-        self.model_status_label = QLabel("⏳ Loading models...")
+        self.model_status_label = QLabel("Loading models...")
         self.model_status_label.setStyleSheet("color:#d97706; font-size:11px; font-weight:700;")
         layout.addWidget(self.model_status_label)
 
-        self.cloud_status_label = QLabel("☁️ Cloud sync: checking...")
+        self.cloud_status_label = QLabel("Cloud sync: checking...")
         self.cloud_status_label.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; font-weight:700;")
         layout.addWidget(self.cloud_status_label)
 
@@ -189,6 +196,11 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.conf_slider)
 
+        # Changing settings while AI is running applies immediately
+        self.model_select.currentIndexChanged.connect(self._apply_live_settings)
+        self.px_threshold_input.valueChanged.connect(self._apply_live_settings)
+        self.conf_slider.valueChanged.connect(self._apply_live_settings)
+
         layout.addWidget(self._divider())
 
         layout.addWidget(self._label("CAMERA SOURCE"))
@@ -196,7 +208,7 @@ class MainWindow(QMainWindow):
         self._style_input(self.camera_select)
         layout.addWidget(self.camera_select)
 
-        refresh_btn = QPushButton("🔄 Scan Cameras")
+        refresh_btn = QPushButton("Scan Cameras")
         refresh_btn.setStyleSheet(self._secondary_btn_style())
         refresh_btn.clicked.connect(self._refresh_cameras)
         layout.addWidget(refresh_btn)
@@ -236,9 +248,9 @@ class MainWindow(QMainWindow):
                              border-top-left-radius:10px; border-top-right-radius:10px; font-weight:700; }}
             QTabBar::tab:selected {{ background:{BG_SIDEBAR}; color:{ACCENT}; border:1px solid {BORDER}; border-bottom:none; }}
         """)
-        self.tabs.addTab(self._build_live_tab(), "🎥 Camera / Video")
-        self.tabs.addTab(self._build_batch_tab(), "📷 Batch Images")
-        self.tabs.addTab(self._build_history_tab(), "🗂 Inspection History")
+        self.tabs.addTab(self._build_live_tab(), "Camera / Video")
+        self.tabs.addTab(self._build_batch_tab(), "Batch Images")
+        self.tabs.addTab(self._build_history_tab(), "Inspection History")
         v.addWidget(self.tabs)
 
         return wrapper
@@ -248,15 +260,15 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(tab)
 
         controls = QHBoxLayout()
-        load_video_btn = QPushButton("📂 Open Video File")
+        load_video_btn = QPushButton("Open Video File")
         load_video_btn.setStyleSheet(self._secondary_btn_style())
         load_video_btn.clicked.connect(self._load_video_file)
 
-        self.cam_btn = QPushButton("📹 Open Camera")
+        self.cam_btn = QPushButton("Open Camera")
         self.cam_btn.setStyleSheet(self._secondary_btn_style())
         self.cam_btn.clicked.connect(self._toggle_camera)
 
-        self.run_ai_btn = QPushButton("▶️ Run AI Analysis")
+        self.run_ai_btn = QPushButton("Run AI Analysis")
         self.run_ai_btn.setEnabled(False)
         self.run_ai_btn.setStyleSheet(self._primary_btn_style())
         self.run_ai_btn.clicked.connect(self._toggle_ai)
@@ -295,7 +307,7 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         v = QVBoxLayout(tab)
 
-        upload_btn = QPushButton("📤 Click to Upload Batch Images (multiple files allowed)")
+        upload_btn = QPushButton("Click to Upload Batch Images (multiple files allowed)")
         upload_btn.setFixedHeight(70)
         upload_btn.setStyleSheet(
             f"QPushButton {{ border:3px dashed {BORDER}; border-radius:20px; font-weight:800; font-size:15px; color:{TEXT_MUTED}; background:{BG_SIDEBAR}; }}"
@@ -320,10 +332,23 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         v = QVBoxLayout(tab)
 
-        refresh_btn = QPushButton("🔄 Refresh History")
+        buttons = QHBoxLayout()
+        refresh_btn = QPushButton("Refresh History")
         refresh_btn.setStyleSheet(self._secondary_btn_style())
         refresh_btn.clicked.connect(self._refresh_history)
-        v.addWidget(refresh_btn)
+        export_btn = QPushButton("Export CSV Report")
+        export_btn.setStyleSheet(self._secondary_btn_style())
+        export_btn.clicked.connect(self._export_csv)
+        clear_btn = QPushButton("Clear History")
+        clear_btn.setStyleSheet(
+            f"QPushButton {{ background:{BAD_BG}; color:{BAD_TEXT}; font-weight:700; padding:10px; border-radius:10px; border:1px solid #fecaca; }}"
+            f"QPushButton:hover {{ background:#fee2e2; }}"
+        )
+        clear_btn.clicked.connect(self._clear_history)
+        buttons.addWidget(refresh_btn)
+        buttons.addWidget(export_btn)
+        buttons.addWidget(clear_btn)
+        v.addLayout(buttons)
 
         self.history_table = QTableWidget(0, 5)
         self.history_table.setHorizontalHeaderLabels(
@@ -380,7 +405,7 @@ class MainWindow(QMainWindow):
     # model loading
     # ------------------------------------------------------------------
     def _start_loading_models(self):
-        self._log("⏳ Loading AI models from the models/ folder...")
+        self._log("Loading AI models from the models/ folder...")
         self.model_load_worker = ModelLoadWorker(self.model_manager)
         self.model_load_worker.progress.connect(self._log)
         self.model_load_worker.finished_ok.connect(self._on_models_loaded)
@@ -388,14 +413,14 @@ class MainWindow(QMainWindow):
         self.model_load_worker.start()
 
     def _on_models_loaded(self):
-        self.model_status_label.setText("✅ Models ready")
+        self.model_status_label.setText("Models ready")
         self.model_status_label.setStyleSheet(f"color:{GOOD_TEXT}; font-size:11px; font-weight:700;")
-        self._log("✅ Both models loaded successfully")
+        self._log("Both models loaded successfully")
 
     def _on_models_failed(self, msg):
-        self.model_status_label.setText("❌ Failed to load models")
+        self.model_status_label.setText("Failed to load models")
         self.model_status_label.setStyleSheet(f"color:{BAD_TEXT}; font-size:11px; font-weight:700;")
-        self._log(f"❌ Model loading failed: {msg}")
+        self._log(f"Model loading failed: {msg}")
         QMessageBox.critical(
             self, "Failed to Load Models",
             f"{msg}\n\n"
@@ -418,7 +443,7 @@ class MainWindow(QMainWindow):
     def _toggle_camera(self):
         if self.camera_worker and self.camera_worker.isRunning() and self.current_source is not None and isinstance(self.current_source, int):
             self._stop_stream()
-            self.cam_btn.setText("📹 Open Camera")
+            self.cam_btn.setText("Open Camera")
             self.cam_btn.setStyleSheet(self._secondary_btn_style())
             return
 
@@ -430,11 +455,11 @@ class MainWindow(QMainWindow):
         self._stop_stream()
         self.current_source = cam_idx
         self._start_stream(cam_idx)
-        self.cam_btn.setText("🚫 Close Camera")
+        self.cam_btn.setText("Close Camera")
         self.cam_btn.setStyleSheet(
             "QPushButton { background:#ef4444; color:white; font-weight:700; padding:10px; border-radius:10px; }"
         )
-        self._log(f"📸 Camera #{cam_idx} opened")
+        self._log(f"Camera #{cam_idx} opened")
 
     def _load_video_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Video File", "", "Video Files (*.mp4 *.avi *.mov *.mkv)")
@@ -443,9 +468,11 @@ class MainWindow(QMainWindow):
         self._stop_stream()
         self.current_source = path
         self._start_stream(path)
-        self._log(f"✅ Video loaded: {os.path.basename(path)}")
+        self._log(f"Video loaded: {os.path.basename(path)}")
 
     def _start_stream(self, source):
+        self._last_live_status = None
+        self._last_live_log_time = 0.0
         self.camera_worker = CameraWorker(source, self.model_manager)
         self.camera_worker.frame_ready.connect(self._on_frame_ready)
         self.camera_worker.error.connect(self._log)
@@ -464,7 +491,7 @@ class MainWindow(QMainWindow):
             self.camera_worker.stop()
             self.camera_worker = None
         self.run_ai_btn.setEnabled(False)
-        self.run_ai_btn.setText("▶️ Run AI Analysis")
+        self.run_ai_btn.setText("Run AI Analysis")
         self.run_ai_btn.setStyleSheet(self._primary_btn_style())
 
     def _toggle_ai(self):
@@ -472,41 +499,57 @@ class MainWindow(QMainWindow):
             return
         self.camera_worker.ai_enabled = not self.camera_worker.ai_enabled
         if self.camera_worker.ai_enabled:
-            self.camera_worker.model_type = self.model_select.currentData()
-            self.camera_worker.conf_threshold = self.conf_slider.value() / 100
-            self.camera_worker.px_threshold = self.px_threshold_input.value()
-            self.run_ai_btn.setText("⏸️ Stop AI Analysis")
+            self._apply_live_settings()
+            self._last_live_status = None
+            self.run_ai_btn.setText("Stop AI Analysis")
             self.run_ai_btn.setStyleSheet(
                 "QPushButton { background:#f43f5e; color:white; font-weight:700; padding:10px; border-radius:10px; }"
             )
-            self._log(f"🚀 Analysis started ({self.model_select.currentText()})")
+            self._log(f"Analysis started ({self.model_select.currentText()})")
         else:
-            self.run_ai_btn.setText("▶️ Run AI Analysis")
+            self.run_ai_btn.setText("Run AI Analysis")
             self.run_ai_btn.setStyleSheet(self._primary_btn_style())
-            self._log("⏸️ Analysis paused")
+            self._log("Analysis paused")
+
+    def _apply_live_settings(self, *_):
+        if not self.camera_worker:
+            return
+        self.camera_worker.model_type = self.model_select.currentData()
+        self.camera_worker.conf_threshold = self.conf_slider.value() / 100
+        self.camera_worker.px_threshold = self.px_threshold_input.value()
 
     def _on_frame_ready(self, raw_bgr, result_bgr, status, pixel_count):
         self.source_label.setPixmap(scale_pixmap_to_label(cvimg_to_qpixmap(raw_bgr), self.source_label))
 
-        if result_bgr is not None:
+        if result_bgr is not None and self.camera_worker:
             self.result_label.setPixmap(scale_pixmap_to_label(cvimg_to_qpixmap(result_bgr), self.result_label))
             self._update_status_banner(status, pixel_count)
-            if status == "MISSING":
+
+            now = time.monotonic()
+            is_new_defect = status == "MISSING" and self._last_live_status != "MISSING"
+            cooldown_over = now - self._last_live_log_time >= LIVE_LOG_COOLDOWN_SEC
+            self._last_live_status = status
+            if status == "MISSING" and (is_new_defect or cooldown_over):
+                self._last_live_log_time = now
                 source_name = "Video/Live" if isinstance(self.current_source, str) else "Live Camera"
                 self.db.insert_record(
-                    source_name, self.model_select.currentData(), status, pixel_count,
-                    self.conf_slider.value() / 100, self.px_threshold_input.value()
+                    source_name, self.camera_worker.model_type, status, pixel_count,
+                    self.camera_worker.conf_threshold, self.camera_worker.px_threshold
                 )
-                self.log_count_label.setText(f"Logs Captured: {self.db.count_all()} Items")
+                self._refresh_record_views()
+
+    def _refresh_record_views(self):
+        self.log_count_label.setText(f"Logs Captured: {self.db.count_all()} Items")
+        self._refresh_history()
 
     def _update_status_banner(self, status, pixel_count):
         if status == "MISSING":
-            self.status_banner.setText(f"🚨 DEFECT DETECTED: {pixel_count} PX")
+            self.status_banner.setText(f"DEFECT DETECTED: {pixel_count} PX")
             self.status_banner.setStyleSheet(
                 "background:#e11d48; color:white; font-weight:900; font-size:18px; border-radius:16px;"
             )
         else:
-            self.status_banner.setText("✅ SYSTEM NORMAL (GOOD)")
+            self.status_banner.setText("SYSTEM NORMAL (GOOD)")
             self.status_banner.setStyleSheet(
                 "background:#059669; color:white; font-weight:900; font-size:18px; border-radius:16px;"
             )
@@ -525,14 +568,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Models Not Ready", "Please wait for the AI models to finish loading.")
             return
 
-        self._log(f"🖼 Processing {len(paths)} image(s) with {self.model_select.currentText()} ...")
+        if self.batch_worker and self.batch_worker.isRunning():
+            QMessageBox.information(self, "Batch Running", "Please wait for the current batch to finish.")
+            return
 
+        self._log(f"Processing {len(paths)} image(s) with {self.model_select.currentText()} ...")
+
+        self.batch_cards = []
         for path in paths:
             card = ImageResultCard(os.path.basename(path))
             pix = QPixmap(path)
             card.set_original(pix)
             self.batch_results_layout.insertWidget(0, card)
-            self.pending_batch_cards[path] = card
+            self.batch_cards.append(card)
 
         model_type = self.model_select.currentData()
         conf = self.conf_slider.value() / 100
@@ -541,25 +589,23 @@ class MainWindow(QMainWindow):
         self.batch_worker = BatchImageWorker(paths, self.model_manager, model_type, conf, px)
         self.batch_worker.result_ready.connect(self._on_batch_result)
         self.batch_worker.error.connect(self._on_batch_error)
-        self.batch_worker.finished_batch.connect(lambda: self._log("✅ Batch processing complete"))
+        self.batch_worker.finished_batch.connect(lambda: self._log("Batch processing complete"))
         self.batch_worker.start()
 
-    def _on_batch_result(self, path, result_bgr, status, pixel_count):
-        card = self.pending_batch_cards.pop(path, None)
-        if card:
-            card.set_result(cvimg_to_qpixmap(result_bgr), status, pixel_count)
+    def _on_batch_result(self, idx, path, result_bgr, status, pixel_count):
+        self.batch_cards[idx].set_result(cvimg_to_qpixmap(result_bgr), status, pixel_count)
 
+        # Record the settings the batch actually ran with, not the current UI values
+        worker = self.batch_worker
         self.db.insert_record(
-            os.path.basename(path), self.model_select.currentData(),
-            status, pixel_count, self.conf_slider.value() / 100, self.px_threshold_input.value()
+            os.path.basename(path), worker.model_type,
+            status, pixel_count, worker.conf_threshold, worker.px_threshold
         )
-        self.log_count_label.setText(f"Logs Captured: {self.db.count_all()} Items")
+        self._refresh_record_views()
 
-    def _on_batch_error(self, path, msg):
-        card = self.pending_batch_cards.pop(path, None)
-        if card:
-            card.set_error()
-        self._log(f"❌ Error with file {os.path.basename(path)}: {msg}")
+    def _on_batch_error(self, idx, path, msg):
+        self.batch_cards[idx].set_error()
+        self._log(f"Error with file {os.path.basename(path)}: {msg}")
 
     # ------------------------------------------------------------------
     # history
@@ -571,31 +617,80 @@ class MainWindow(QMainWindow):
             for c, val in enumerate(row):
                 self.history_table.setItem(r, c, QTableWidgetItem(str(val)))
 
+    def _export_csv(self):
+        default_name = f"inspection_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        path, _ = QFileDialog.getSaveFileName(self, "Export CSV Report", default_name, "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            self.db.export_csv(path)
+        except OSError as e:
+            QMessageBox.critical(self, "Export Failed", str(e))
+            return
+        self._log(f"Exported CSV report: {os.path.basename(path)}")
+
+    def _clear_history(self):
+        total = self.db.count_all()
+        if total == 0:
+            QMessageBox.information(self, "Clear History", "There is no inspection history to clear.")
+            return
+
+        msg = (
+            f"Delete all {total} inspection record(s) stored on this computer?\n\n"
+            f"This cannot be undone. Export a CSV report first if you need a copy.\n"
+            f"Records already synced to the cloud dashboard are not affected."
+        )
+        unsynced = self.db.count_unsynced()
+        if unsynced and self.cloud_sync and self.cloud_sync.is_configured():
+            msg += f"\n\nWarning: {unsynced} record(s) have not been synced to the cloud yet and will be lost."
+
+        answer = QMessageBox.warning(
+            self, "Clear History", msg,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        deleted = self.db.clear_history()
+        self._refresh_record_views()
+        self._log(f"Cleared {deleted} inspection record(s) from local history")
+
     # ------------------------------------------------------------------
     # cloud sync
     # ------------------------------------------------------------------
     def _start_cloud_sync(self):
         self.cloud_sync = CloudSyncWorker(self.db, self.device_id)
         if not self.cloud_sync.is_configured():
-            self.cloud_status_label.setText("☁️ Cloud sync: off (no .env configured)")
+            self.cloud_status_label.setText("Cloud sync: off (no .env configured)")
             self.cloud_status_label.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; font-weight:700;")
             return
 
-        self.cloud_status_label.setText("☁️ Cloud sync: starting...")
+        self.cloud_status_label.setText("Cloud sync: starting...")
         self.cloud_sync.status_changed.connect(self._on_cloud_status)
-        self.cloud_sync.synced_batch.connect(lambda n: self._log(f"☁️ Synced {n} record(s) to the cloud"))
+        self.cloud_sync.synced_batch.connect(self._on_cloud_synced)
         self.cloud_sync.start()
+
+    def _on_cloud_synced(self, n):
+        self._log(f"Synced {n} record(s) to Supabase")
+        self.cloud_status_label.setText("Cloud sync: active")
+        self.cloud_status_label.setStyleSheet(f"color:{GOOD_TEXT}; font-size:11px; font-weight:700;")
 
     def _on_cloud_status(self, msg):
         self._log(msg)
-        if "disabled" in msg or "off" in msg:
-            self.cloud_status_label.setText("☁️ Cloud sync: off")
+        if "disabled" in msg:
+            self.cloud_status_label.setText("Cloud sync: off")
             self.cloud_status_label.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px; font-weight:700;")
+        elif "offline" in msg:
+            self.cloud_status_label.setText("Cloud sync: offline (data kept locally)")
+            self.cloud_status_label.setStyleSheet("color:#d97706; font-size:11px; font-weight:700;")
+        elif "duplicate protection is off" in msg:
+            self.cloud_status_label.setText("Cloud sync: active (run migration 001)")
+            self.cloud_status_label.setStyleSheet("color:#d97706; font-size:11px; font-weight:700;")
         elif "error" in msg.lower() or "failed" in msg.lower():
-            self.cloud_status_label.setText("☁️ Cloud sync: retrying...")
+            self.cloud_status_label.setText("Cloud sync: retrying...")
             self.cloud_status_label.setStyleSheet("color:#d97706; font-size:11px; font-weight:700;")
         else:
-            self.cloud_status_label.setText("☁️ Cloud sync: active")
+            self.cloud_status_label.setText("Cloud sync: active")
             self.cloud_status_label.setStyleSheet(f"color:{GOOD_TEXT}; font-size:11px; font-weight:700;")
 
     # ------------------------------------------------------------------
@@ -603,6 +698,7 @@ class MainWindow(QMainWindow):
         self._stop_stream()
         if self.batch_worker:
             self.batch_worker.stop()
+            self.batch_worker.wait(5000)
         if self.cloud_sync:
             self.cloud_sync.stop()
         event.accept()

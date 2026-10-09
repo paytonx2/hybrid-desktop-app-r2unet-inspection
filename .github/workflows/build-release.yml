@@ -3,10 +3,22 @@ name: CD - Build & Release Desktop App
 # Runs automatically when you push a tag like "v1.0.0"
 #   git tag v1.0.0
 #   git push origin v1.0.0
+#
+# One-time setup (see CICTCD_SETUP.md, Part 5):
+#   - Create a GitHub Release with tag "models-v1" and upload both .h5 files
+#     to it (models/*.h5 are git-ignored, so the runner can't get them from git).
+#   - Optional: repo secrets SUPABASE_URL / SUPABASE_ANON_KEY so the .exe
+#     ships with cloud sync already configured.
 on:
   push:
     tags:
       - 'v*.*.*'
+
+permissions:
+  contents: write   # needed to create the GitHub Release
+
+env:
+  MODELS_RELEASE_TAG: models-v1
 
 jobs:
   build-windows-exe:
@@ -18,18 +30,46 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements*.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          pip install -r requirements-dev.txt
+
+      - name: Download model files from the "${{ env.MODELS_RELEASE_TAG }}" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:MODELS_RELEASE_TAG --pattern "*.h5" --dir models --clobber
+          foreach ($f in @("defect_model.h5", "r2unet__model_underbody_screw.h5")) {
+            if (-not (Test-Path "models/$f")) {
+              Write-Error "models/$f is missing. Upload it to the '$env:MODELS_RELEASE_TAG' GitHub Release (see CICTCD_SETUP.md Part 5)."
+              exit 1
+            }
+          }
 
       - name: Build .exe with PyInstaller
         run: |
           pyinstaller --noconfirm --onedir --windowed `
             --name "R2UNET_Inspection_Pro" `
+            --add-data "models;models" `
             main.py
+
+      - name: Add .env template (and real .env if secrets are set)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          Copy-Item .env.example dist/R2UNET_Inspection_Pro/.env.example
+          if ($env:SUPABASE_URL -and $env:SUPABASE_ANON_KEY) {
+            "SUPABASE_URL=$env:SUPABASE_URL`nSUPABASE_ANON_KEY=$env:SUPABASE_ANON_KEY" |
+              Out-File -Encoding utf8NoBOM dist/R2UNET_Inspection_Pro/.env
+            Write-Host "Bundled .env with cloud sync settings"
+          } else {
+            Write-Host "No SUPABASE_* secrets set: the .exe runs offline until the user creates .env"
+          }
 
       - name: Zip the build output
         run: Compress-Archive -Path dist/R2UNET_Inspection_Pro/* -DestinationPath R2UNET_Inspection_Pro-${{ github.ref_name }}-windows.zip
@@ -45,13 +85,6 @@ jobs:
         with:
           files: R2UNET_Inspection_Pro-${{ github.ref_name }}-windows.zip
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # The web dashboard does NOT need a step here: once you connect the repo
   # to Vercel, Vercel deploys it automatically on every push to main.
-  # This job just documents that this pipeline is deliberately decoupled.
-  note-about-dashboard:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "Dashboard deploys are handled by Vercel's own Git integration, not this workflow."

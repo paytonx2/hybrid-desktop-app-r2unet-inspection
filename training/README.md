@@ -31,10 +31,13 @@ training/data/val/
 └── masks/
 ```
 
-This folder is git-ignored (see `.gitignore`) — datasets don't belong in
-git history. Fetch it from wherever you're storing your real dataset
-(Supabase Storage, Google Drive, DVC, etc.) as the first step of
-`retrain.yml`.
+`training/data/` and `training/output/` are git-ignored — datasets don't
+belong in git history. In CI, `retrain.yml` downloads
+`<model_target>_dataset.zip` (`defect_dataset.zip` or
+`tank_screw_dataset.zip`) from the `dataset-v1` GitHub Release and unzips it
+into `training/data/`, so the zip must contain `train/` and `val/` at its
+top level. The current production model is downloaded from the `models-v1`
+release. See `CICTCD_SETUP.md` Part 6.
 
 ## Running locally
 

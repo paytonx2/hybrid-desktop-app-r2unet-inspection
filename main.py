@@ -6,8 +6,16 @@ from PySide6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 
 
+def get_base_dir():
+    # When built with PyInstaller, keep data/ and .env next to the .exe
+    # (not inside the hidden _internal/ folder) so users can find them.
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def main():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = get_base_dir()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 

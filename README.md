@@ -1,22 +1,26 @@
-# R2U-NET Inspection Pro — Desktop (Offline)
+# R2U-NET Inspection Pro — Hybrid Desktop App + Dashboard
 
-แปลงระบบจาก Web (Hugging Face + Vercel) ให้เป็น **Desktop App ที่ทำงานภายในเครื่องทั้งหมด**
+แปลงระบบจาก Web (Hugging Face + Vercel) ให้เป็น **Desktop App ที่ทำงานภายในเครื่องทั้งหมด** (Offline-first)
 
-ไม่ต้องใช้งาน Internet หรือ Server ภายนอกในการทำงานหลักอีกต่อไป
+งานหลัก (กล้อง, AI, บันทึกผล) ไม่ต้องใช้ Internet เลย และถ้ามี Internet + ตั้งค่า `.env` ไว้ ผลการตรวจจะถูก Sync ขึ้น Supabase และแสดงบน Web Dashboard แบบ Realtime
 
-ตรรกะการคำนวณ (`dice_coeff`, `dice_loss`, `combined_loss`, preprocessing, contour, threshold)
+ตรรกะการคำนวณ (`dice_coeff`, `dice_loss`, `combined_loss`, preprocessing, contour, threshold) คัดลอกจากระบบเดิมแบบ 1:1 และมี Unit Test ป้องกันไม่ให้ถูกแก้โดยไม่ตั้งใจ
+
+> วิธีตั้งค่า Supabase / GitHub / Vercel / Release ดูที่ [`CICTCD_SETUP.md`](CICTCD_SETUP.md)
 
 ---
 
 ## 1) โครงสร้างโปรเจกต์
 
 ```text
-r2unet_desktop/
+r2unet_desktop_final/
 
 ├── main.py                         ← จุดเริ่มต้นโปรแกรม (รันไฟล์นี้)
-├── requirements.txt
+├── requirements.txt                ← Library ที่ใช้รันโปรแกรม (ล็อกเวอร์ชัน)
+├── requirements-dev.txt            ← + pytest, pyinstaller (สำหรับ test / build)
+├── .env.example                    ← Template ของ .env (Supabase keys)
 
-├── models/                         ← ★ เอาไฟล์โมเดล .h5 มาวางตรงนี้ ★
+├── models/                         ← เอาไฟล์โมเดล .h5 มาวางตรงนี้
 │   ├── defect_model.h5
 │   └── r2unet__model_underbody_screw.h5
 
@@ -28,7 +32,8 @@ r2unet_desktop/
 │   ├── model_manager.py            ← โหลด/เก็บโมเดลทั้ง 2 ตัวในหน่วยความจำ
 │   ├── inference.py                ← Logic การ Predict (คัดลอกจาก Flask /predict เดิม)
 │   ├── model_load_worker.py        ← Thread โหลดโมเดลตอนเปิดโปรแกรม
-│   └── batch_worker.py             ← Thread ประมวลผลรูปภาพหลายไฟล์
+│   ├── batch_worker.py             ← Thread ประมวลผลรูปภาพหลายไฟล์
+│   └── cloud_sync.py               ← Thread Sync ผลขึ้น Supabase (offline-first)
 
 ├── camera/
 │   └── camera_worker.py            ← Thread อ่านภาพจากกล้อง/วิดีโอ + เรียก Inference
@@ -36,9 +41,21 @@ r2unet_desktop/
 ├── database/
 │   └── db_manager.py               ← SQLite: บันทึกประวัติ / Export CSV
 
-└── ui/
-    ├── main_window.py              ← หน้าตาโปรแกรมหลัก (PySide6)
-    └── utils.py                    ← แปลงภาพ OpenCV → Qt
+├── ui/
+│   ├── main_window.py              ← หน้าตาโปรแกรมหลัก (PySide6)
+│   └── utils.py                    ← แปลงภาพ OpenCV → Qt
+
+├── tests/                          ← Unit tests (รันใน CI ทุกครั้งที่ push)
+├── training/                       ← CT: retrain.py (scaffold) + evaluate.py (gate)
+├── dashboard/                      ← Next.js Web Dashboard (deploy ด้วย Vercel)
+├── supabase/
+│   ├── schema.sql                  ← Schema สำหรับ Project ใหม่
+│   └── migrations/                 ← SQL สำหรับอัปเดต Project ที่สร้างไปแล้ว
+└── .github/workflows/
+    ├── ci.yml                      ← CI: test desktop app
+    ├── dashboard-ci.yml            ← CI: build dashboard
+    ├── build-release.yml           ← CD: build .exe เมื่อ push tag v*.*.*
+    └── retrain.yml                 ← CT: retrain + evaluate (กดรันเอง)
 ```
 
 สถาปัตยกรรมถูกแยกเป็นส่วน ๆ ได้แก่ **UI / Camera / AI / Database / Controller** ตามที่ต้องการ
@@ -62,6 +79,9 @@ source venv/bin/activate     # macOS / Linux
 
 # 3. ติดตั้ง Library ทั้งหมด
 pip install -r requirements.txt
+
+# 4. (ไม่บังคับ) ถ้าจะรัน test หรือ build .exe
+pip install -r requirements-dev.txt
 ```
 
 > **หมายเหตุ:** หากเครื่องมีการ์ดจอ NVIDIA และต้องการให้รันเร็วขึ้นด้วย GPU
@@ -74,10 +94,10 @@ pip install -r requirements.txt
 >
 > `Unrecognized keyword arguments: ['batch_shape']`
 >
-> `requirements.txt` นี้กำหนด `tensorflow>=2.16` ไว้แล้วเพื่อช่วยแก้ปัญหานี้ หากยังพบ Error ดังกล่าว ให้รัน:
+> `requirements.txt` ล็อก `tensorflow==2.21.0` (Keras 3) ไว้แล้ว หากยังพบ Error ดังกล่าว แปลว่า venv ยังใช้ TensorFlow รุ่นเก่าอยู่ ให้รัน:
 >
 > ```bash
-> pip install --upgrade tensorflow
+> pip install -r requirements.txt
 > ```
 
 VS Code Extension ที่แนะนำ:
@@ -130,7 +150,7 @@ python main.py
 เมื่อโหลดโมเดลเสร็จ จะขึ้นข้อความ:
 
 ```text
-✅ โมเดลพร้อมใช้งาน
+Models ready
 ```
 
 ### ฟังก์ชันหลักที่มีอยู่ในโปรแกรม
@@ -138,25 +158,37 @@ python main.py
 ฟังก์ชันทั้งหมดตรงตามโค้ด Web เดิมที่ให้ไว้:
 
 * เลือกโมเดล (Pipe Staple / Underbody Screw)
-* ตั้งค่า Pixel Threshold และ Confidence
+* ตั้งค่า Pixel Threshold และ Confidence (ปรับระหว่างที่ AI ทำงานอยู่ได้ทันที)
 * เปิดกล้อง (เลือกกล้องได้หากมีมากกว่า 1 ตัว)
 * เปิดไฟล์วิดีโอ
 * กด **Run AI Analysis** เพื่อวิเคราะห์แบบ Real-time
 * แสดงกรอบ **MISSING** และสถานะ **GOOD / MISSING**
 * อัปโหลดรูปภาพหลายไฟล์พร้อมกัน (Batch)
 * แสดงภาพต้นฉบับและผลลัพธ์คู่กัน
-* บันทึกผลการตรวจสอบลง SQLite โดยอัตโนมัติ (เมื่อพบ `MISSING`)
-* ดูประวัติการตรวจสอบทั้งหมดในแท็บ **ประวัติการตรวจสอบ**
-* Export CSV Report
+* บันทึกผลการตรวจสอบลง SQLite โดยอัตโนมัติ
+  * กล้อง/วิดีโอ: บันทึกเฉพาะ `MISSING` — ทันทีที่เปลี่ยนจาก GOOD เป็น MISSING และถ้ายังเจออยู่ บันทึกซ้ำไม่เกินทุก 5 วินาที (`LIVE_LOG_COOLDOWN_SEC` ใน `ui/main_window.py`)
+  * Batch Images: บันทึกทุกภาพ (ทั้ง GOOD และ MISSING)
+* ดูประวัติการตรวจสอบทั้งหมดในแท็บ **Inspection History** (อัปเดตอัตโนมัติ)
+* ปุ่ม **Export CSV Report** ในแท็บ Inspection History
+* ปุ่ม **Clear History** ในแท็บ Inspection History — ลบประวัติทั้งหมดที่เก็บในเครื่องนี้ (มีหน้าต่างให้ยืนยันก่อน และเตือนถ้ายังมีข้อมูลที่ยังไม่ได้ Sync) ข้อมูลที่ Sync ขึ้น Supabase ไปแล้วจะไม่ถูกลบ
+* Sync ผลขึ้น Supabase อัตโนมัติเมื่อมี Internet (ถ้าตั้งค่า `.env` ไว้) — ไม่มีเน็ตก็ทำงานได้ปกติ ข้อมูลจะรอ Sync ทีหลัง
+
+### รัน Unit Test
+
+```bash
+pytest tests/ -v
+```
 
 ---
 
 ## 5) การ Build เป็นไฟล์ `.exe` (สำหรับนำไปติดตั้งเครื่องหน้างาน)
 
+> วิธีที่แนะนำ: ให้ GitHub Actions build ให้อัตโนมัติด้วยการ push tag (ดู `CICTCD_SETUP.md` Part 5) ส่วนด้านล่างคือวิธี build เองในเครื่อง
+
 ติดตั้ง PyInstaller:
 
 ```bash
-pip install pyinstaller
+pip install -r requirements-dev.txt
 ```
 
 จากนั้นรันคำสั่งต่อไปนี้ในโฟลเดอร์โปรเจกต์เดียวกับ `main.py`:
@@ -188,6 +220,8 @@ pyinstaller --noconfirm --onedir --windowed \
 ```text
 dist/R2UNET_Inspection_Pro/
 ```
+
+ถ้าต้องการ Cloud sync ให้คัดลอกไฟล์ `.env` ไปวางไว้ข้าง ๆ `R2UNET_Inspection_Pro.exe` ด้วย (ฐานข้อมูล `data/inspections.db` จะถูกสร้างไว้ข้าง `.exe` เช่นกัน)
 
 สามารถคัดลอกทั้งโฟลเดอร์นี้ไปติดตั้งบนคอมพิวเตอร์หน้างานได้เลย
 
@@ -221,4 +255,4 @@ dist/R2UNET_Inspection_Pro/
 
 * ระบบทำงานแบบ **Hybrid Desktop App + Dashboard**
 
-* ไม่จำเป็นต้องพึ่งพา Internet
+* งานหลักไม่จำเป็นต้องพึ่งพา Internet (Internet ใช้เฉพาะ Cloud sync)

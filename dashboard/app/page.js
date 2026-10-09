@@ -16,20 +16,29 @@ export default function DashboardPage() {
   const [rows, setRows] = useState([]);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Totals over the whole table (not just the PAGE_SIZE rows shown below)
+  const [totals, setTotals] = useState({ total: 0, missing: 0 });
 
   // Initial load
   useEffect(() => {
     let cancelled = false;
 
     async function loadInitial() {
-      const { data, error } = await supabase
-        .from('inspections')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(PAGE_SIZE);
+      const [latest, all, missing] = await Promise.all([
+        supabase
+          .from('inspections')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(PAGE_SIZE),
+        supabase.from('inspections').select('*', { count: 'exact', head: true }),
+        supabase.from('inspections').select('*', { count: 'exact', head: true }).eq('status', 'MISSING'),
+      ]);
 
       if (!cancelled) {
-        if (!error && data) setRows(data);
+        if (!latest.error && latest.data) setRows(latest.data);
+        if (!all.error && !missing.error) {
+          setTotals({ total: all.count ?? 0, missing: missing.count ?? 0 });
+        }
         setLoading(false);
       }
     }
@@ -47,6 +56,10 @@ export default function DashboardPage() {
         { event: 'INSERT', schema: 'public', table: 'inspections' },
         (payload) => {
           setRows((prev) => [payload.new, ...prev].slice(0, PAGE_SIZE));
+          setTotals((prev) => ({
+            total: prev.total + 1,
+            missing: prev.missing + (payload.new.status === 'MISSING' ? 1 : 0),
+          }));
         }
       )
       .subscribe((status) => {
@@ -59,12 +72,14 @@ export default function DashboardPage() {
   }, []);
 
   const stats = useMemo(() => {
-    const total = rows.length;
-    const missing = rows.filter((r) => r.status === 'MISSING').length;
-    const good = total - missing;
     const devices = new Set(rows.map((r) => r.device_id)).size;
-    return { total, missing, good, devices };
-  }, [rows]);
+    return {
+      total: totals.total,
+      missing: totals.missing,
+      good: totals.total - totals.missing,
+      devices,
+    };
+  }, [rows, totals]);
 
   return (
     <main style={{ maxWidth: 1100, margin: '0 auto', padding: '32px 24px' }}>
@@ -79,10 +94,10 @@ export default function DashboardPage() {
       </header>
 
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
-        <StatCard label="Recent Records" value={stats.total} color={ACCENT} />
+        <StatCard label="Total Records" value={stats.total} color={ACCENT} />
         <StatCard label="Good" value={stats.good} color={GOOD} />
         <StatCard label="Missing / Defect" value={stats.missing} color={BAD} />
-        <StatCard label="Active Devices" value={stats.devices} color={TEXT_MAIN} />
+        <StatCard label={`Devices (last ${PAGE_SIZE})`} value={stats.devices} color={TEXT_MAIN} />
       </section>
 
       <section style={{ background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 16, overflow: 'hidden' }}>
@@ -181,7 +196,7 @@ function StatusPill({ status }) {
         color: isMissing ? BAD : GOOD,
       }}
     >
-      {isMissing ? '🚨 MISSING' : '✅ GOOD'}
+      {isMissing ? 'MISSING' : 'GOOD'}
     </span>
   );
 }

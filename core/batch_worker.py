@@ -8,10 +8,10 @@ from core.inference import run_inference
 class BatchImageWorker(QThread):
     """
     ประมวลผลรปูภาพหลายไฟลพ์ รอ้ มกนั (แบบเรยีงทลีะภาพใน thread แยก)
-    result_ready ส่ง: file_path, result_bgr, status, pixel_count
+    result_ready ส่ง: index, file_path, result_bgr, status, pixel_count
     """
-    result_ready = Signal(str, object, str, int)
-    error = Signal(str, str)  # file_path, message
+    result_ready = Signal(int, str, object, str, int)
+    error = Signal(int, str, str)  # index, file_path, message
     finished_batch = Signal()
 
     def __init__(self, file_paths, model_manager, model_type, conf_threshold, px_threshold, parent=None):
@@ -25,7 +25,7 @@ class BatchImageWorker(QThread):
 
     def run(self):
         model = self.model_manager.get_model(self.model_type)
-        for path in self.file_paths:
+        for idx, path in enumerate(self.file_paths):
             if self._stop:
                 break
             try:
@@ -33,13 +33,13 @@ class BatchImageWorker(QThread):
                 img_array = np.fromfile(path, dtype=np.uint8)
                 img_bgr = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
                 if img_bgr is None:
-                    self.error.emit(path, "Unable to read this image file")
+                    self.error.emit(idx, path, "Unable to read this image file")
                     continue
 
                 out = run_inference(img_bgr, model, self.conf_threshold, self.px_threshold)
-                self.result_ready.emit(path, out['result_bgr'], out['status'], out['pixel_count'])
+                self.result_ready.emit(idx, path, out['result_bgr'], out['status'], out['pixel_count'])
             except Exception as e:
-                self.error.emit(path, str(e))
+                self.error.emit(idx, path, str(e))
 
         self.finished_batch.emit()
 

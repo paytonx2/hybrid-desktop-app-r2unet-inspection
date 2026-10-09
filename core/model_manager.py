@@ -1,4 +1,5 @@
 import os
+import sys
 import tensorflow as tf
 
 from core.losses import CUSTOM_OBJECTS
@@ -16,9 +17,18 @@ class ModelManager:
         self.screw_model = None
         self._loaded = False
 
+    def _models_dir(self):
+        models_dir = os.path.join(self.base_dir, 'models')
+        # PyInstaller --add-data puts bundled files under sys._MEIPASS (_internal/)
+        bundled_dir = os.path.join(getattr(sys, '_MEIPASS', ''), 'models')
+        if not os.path.isdir(models_dir) and getattr(sys, 'frozen', False) and os.path.isdir(bundled_dir):
+            return bundled_dir
+        return models_dir
+
     def default_paths(self):
-        defect_path = os.path.join(self.base_dir, 'models', 'defect_model.h5')
-        screw_path = os.path.join(self.base_dir, 'models', 'r2unet__model_underbody_screw.h5')
+        models_dir = self._models_dir()
+        defect_path = os.path.join(models_dir, 'defect_model.h5')
+        screw_path = os.path.join(models_dir, 'r2unet__model_underbody_screw.h5')
         return defect_path, screw_path
 
     def load_models(self, defect_path=None, screw_path=None, progress_callback=None):

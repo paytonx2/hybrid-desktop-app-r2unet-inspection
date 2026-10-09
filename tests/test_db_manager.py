@@ -48,3 +48,21 @@ def test_export_csv(tmp_path):
     content = out_file.read_text(encoding="utf-8-sig")
     assert "MISSING" in content
     assert "Timestamp" in content
+
+
+def test_clear_history_removes_all_rows():
+    db = make_db()
+    db.insert_record("cam", "defect", "MISSING", 900, 0.35, 500)
+    db.insert_record("cam", "defect", "GOOD", 10, 0.35, 500)
+    assert db.clear_history() == 2
+    assert db.count_all() == 0
+    assert db.fetch_history() == []
+
+
+def test_clear_history_does_not_reuse_ids():
+    # Supabase dedups on (device_id, local_id), so ids must never restart at 1
+    db = make_db()
+    old_id = db.insert_record("cam", "defect", "MISSING", 900, 0.35, 500)
+    db.clear_history()
+    new_id = db.insert_record("cam", "defect", "MISSING", 900, 0.35, 500)
+    assert new_id > old_id

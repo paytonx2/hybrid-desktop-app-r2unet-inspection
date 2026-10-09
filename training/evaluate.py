@@ -96,7 +96,7 @@ def main():
             f.write("## CT Evaluation Gate\n")
             f.write(f"- Current model dice score: `{current_score:.4f}`\n")
             f.write(f"- Candidate model dice score: `{candidate_score:.4f}`\n")
-            f.write(f"- Result: **{'PASSED ✅' if passed else 'FAILED ❌'}**\n")
+            f.write(f"- Result: **{'PASSED' if passed else 'FAILED'}**\n")
 
     sys.exit(0 if passed else 1)
 

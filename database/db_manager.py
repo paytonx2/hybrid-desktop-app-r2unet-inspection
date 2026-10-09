@@ -110,6 +110,21 @@ class DBManager:
         conn.close()
         return n
 
+    def clear_history(self):
+        """
+        Delete every local inspection record. Returns the number of rows removed.
+        The AUTOINCREMENT counter is deliberately NOT reset: new rows must keep
+        getting fresh ids, because Supabase ignores rows whose (device_id, local_id)
+        it has already seen.
+        """
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute('DELETE FROM inspections')
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+
     def export_csv(self, out_path):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
