@@ -434,160 +434,80 @@ CD - Build & Release Desktop App
 
 # Part 6 — CT (Retraining โมเดล)
 
-ส่วนนี้ยัง **ไม่ได้เชื่อมแบบสมบูรณ์ 100%**
+CT ใช้งานได้จริงแล้ว ใช้โค้ดชุดเดียวกับโน้ตบุ๊ก `D:\MODEL R2U-NET\R2UNet_pipe_staple_train.ipynb` ที่สร้าง `models/defect_model.h5` ตัวปัจจุบัน
 
-เพราะต้องใช้สิ่งที่มีเฉพาะในโปรเจกต์จริงของคุณ ได้แก่:
+| ไฟล์ | หน้าที่ |
+|---|---|
+| `training/common.py` | แบ่งข้อมูล train / val / test แบบไม่ซ้ำกัน (เช็ค MD5 ทุกรูป) + ตัววัดผล |
+| `training/r2unet.py` | โครงสร้าง R2U-Net |
+| `training/retrain.py` | เทรนโมเดลใหม่ (candidate) แล้วบันทึกเป็น `.h5` |
+| `training/evaluate.py` | ด่านตัดสิน: วัดโมเดลเก่ากับโมเดลใหม่บน test set ชุดเดียวกัน ด้วยโค้ดของแอปตัวจริง (`core/inference.py`) |
+| `.github/workflows/retrain.yml` | รันทั้งหมดบน GitHub เมื่อกด Run workflow |
 
-* Dataset สำหรับ Training จริง
-* Architecture ของ R2U-Net จริง
+## ด่านตัดสิน (Gate) ทำงานยังไง
 
-ซึ่งไม่ได้รวมอยู่ในข้อมูลที่ให้มาก่อนหน้านี้
+ใช้ค่าตั้งต้นของแอป (Confidence 0.35, Pixel Threshold 500) แล้วโมเดลใหม่ต้อง**ไม่แย่กว่า**โมเดลเดิมทั้ง 3 ข้อ:
 
-แต่ส่วนระบบถูกเตรียมไว้ให้แล้ว
+* **Recall** — จับชิ้นที่หายได้ ไม่น้อยกว่าเดิม
+* **Specificity** — ของดีผ่าน ไม่น้อยกว่าเดิม
+* **Dice เฉลี่ย** (ภาพที่มี defect) — ต่ำกว่าเดิมได้ไม่เกิน 0.02
 
-มีไฟล์ดังนี้:
+ถ้าดูแค่ Recall จะหลอกได้: โมเดลที่เทรนไม่ดีแล้วทักว่าเสียทุกชิ้นจะได้ Recall 100% (ทดสอบแล้ว ได้ Specificity 0% และถูกตีตก)
 
-### `training/evaluate.py`
+## ตั้งค่าครั้งแรก: อัปโหลด Dataset เป็น Release `dataset-v1`
 
-ไฟล์นี้ทำงานได้แล้ว
+### 1. เตรียมไฟล์ zip
 
-ใช้สำหรับเปรียบเทียบโมเดล `.h5` จำนวน 2 ตัวกับ Validation Set
-
-โดยใช้ `dice_coeff` ตัวเดียวกับที่ Production ใช้อยู่
-
-และ Pipeline จะ Fail หากโมเดลใหม่มีผลลัพธ์แย่กว่าโมเดลเดิม
-
----
-
-### `training/retrain.py`
-
-เป็น **Scaffold สำหรับ Retraining**
-
-ตอนนี้มีโมเดลขนาดเล็กตัวอย่างอยู่ และมีตำแหน่ง `TODO` ระบุไว้อย่างชัดเจนว่าต้องนำ:
-
-* Architecture จริง
-* Data Loader จริง
-
-มาใส่ตรงไหน
-
----
-
-### `.github/workflows/retrain.yml`
-
-เป็น Workflow สำหรับ CT ที่สามารถเรียกใช้ด้วยตัวเอง
-
-ไปที่:
-
-**GitHub → Actions → CT - Retrain & Evaluate → Run workflow**
-
-ระบบจะ:
-
-1. Train โมเดล
-2. Evaluate โมเดล
-3. เปรียบเทียบคะแนน
-4. Upload Candidate Model เป็น Artifact ให้ดาวน์โหลดไปตรวจสอบ
-
----
-
-# สิ่งที่ต้องทำให้ CT ใช้งานจริง
-
-ก่อนกด **Run workflow** ให้ทำตามนี้:
-
-### 1. ใส่ Architecture จริง
-
-เปิด:
+ไฟล์ `D:\MODEL R2U-NET\defect_dataset.zip` (100 MB) **ทำไว้ให้แล้ว** และทดสอบแล้วว่าโครงสร้างถูกต้อง ข้างในเป็นโฟลเดอร์ AutoVI ตรงๆ:
 
 ```text
-training/retrain.py
+train/good/*.png
+test/good/*.png
+test/missing/XXXX.png                 (ครบ 117 รูป)
+ground_truth/missing/XXXX/0000.png
+license.txt                           (CC BY-NC-SA 4.0, Renault Group)
 ```
 
-แล้วเติมฟังก์ชัน:
+ถ้าจะทำ `tank_screw_dataset.zip` เอง: zip ข้างในโฟลเดอร์ `tank_screw` (ไม่ใช่ตัวโฟลเดอร์) ให้ `train/`, `test/`, `ground_truth/` อยู่ชั้นบนสุด โฟลเดอร์ `train/missing` ที่ copy มาจะถูกข้ามอัตโนมัติ
 
-```python
-build_model()
+### 2. อัปโหลด
+
+GitHub → **Releases** → **Draft a new release**
+
+* Tag: `dataset-v1` → **Create new tag**
+* Title: `Dataset v1 (AutoVI)`
+* Description ใส่เครดิต: `AutoVI dataset © Renault Group, CC BY-NC-SA 4.0 — non-commercial use only`
+* แนบ `defect_dataset.zip`
+* ติ๊ก **Set as a pre-release** และเอาติ๊ก **Set as the latest release** ออก
+* กด **Publish release**
+
+> **คำเตือน:** Repo Public = Dataset เป็นสาธารณะ AutoVI อนุญาตให้เผยแพร่ต่อได้ (CC BY-NC-SA 4.0) ต้องใส่เครดิต ห้ามใช้เชิงพาณิชย์ และแนบ license ไปด้วย (มี `license.txt` อยู่ใน zip แล้ว)
+
+## วิธีรัน CT
+
+GitHub → **Actions** → **CT - Retrain & Evaluate Candidate Model** → **Run workflow**
+
+* `model_target`: `defect` (Pipe Staple) หรือ `tank_screw`
+* `epochs`: ปล่อย `80` ไว้ (มี EarlyStopping หยุดเองเมื่อไม่ดีขึ้น)
+
+ใช้เวลาประมาณ **30–60 นาที** (เครื่อง GitHub เป็น CPU 4 core)
+
+เมื่อเสร็จ:
+
+* หน้า **Summary** ของ run จะมีตารางเปรียบเทียบโมเดลเก่ากับใหม่ และผล **PASSED / FAILED**
+* ส่วน **Artifacts** มีให้ดาวน์โหลด: โมเดลใหม่ `.h5`, `evaluation.json`, `history.csv`, `split.csv`
+* ถ้า Gate ไม่ผ่าน run จะขึ้นสีแดง เป็นเรื่องปกติ แปลว่าโมเดลใหม่ไม่ดีกว่าตัวเดิม (ยังดาวน์โหลดไปดูได้)
+
+> ถ้าเทรนซ้ำด้วยข้อมูลชุดเดิม ผลจะใกล้เคียงโมเดลปัจจุบันมาก Gate อาจผ่านหรือไม่ผ่านก็ได้ CT มีประโยชน์จริงเมื่อมี**ข้อมูลใหม่**เพิ่มเข้ามา (อัป zip ใหม่เป็น `dataset-v2` แล้วแก้ `DATASET_RELEASE_TAG` ใน `retrain.yml`)
+
+## รันในเครื่องตัวเอง (ไม่ต้องรอ GitHub)
+
+```bash
+python training/retrain.py --data-dir "D:/MODEL R2U-NET/pipe_staple" --output training/output/candidate_defect_model.h5
 ```
 
-ด้วย Architecture R2U-Net จริงของคุณ
-
-หรือใช้วิธีเดียวกับที่คุณใช้สร้าง:
-
-```text
-defect_model.h5
-```
-
-เดิม
-
----
-
-### 2. ใส่ Data Loader จริง
-
-เติม:
-
-```python
-load_training_data()
-```
-
-หาก Dataset ของคุณไม่ได้อยู่ในรูปแบบ:
-
-```text
-images/
-masks/
-```
-
-ให้แก้ Data Loader ให้ตรงกับโครงสร้าง Dataset จริงของคุณ
-
-สามารถดูรายละเอียดเพิ่มเติมได้ที่:
-
-```text
-training/README.md
-```
-
----
-
-### 3. เตรียม Dataset แล้วอัปโหลดเป็น GitHub Release ชื่อ `dataset-v1`
-
-`retrain.yml` จะดาวน์โหลด Dataset จาก Release นี้อัตโนมัติ (Dataset ไม่ควรอยู่ใน Git)
-
-สร้างไฟล์ zip **ชื่อตามโมเดล**:
-
-* `defect_dataset.zip` — สำหรับ Pipe Staple
-* `tank_screw_dataset.zip` — สำหรับ Underbody Screw
-
-ภายใน zip ต้องมีโครงสร้างแบบนี้ (อยู่ชั้นบนสุดของ zip เลย ไม่มีโฟลเดอร์ครอบ):
-
-```text
-train/images/0001.png
-train/masks/0001.png      ← ชื่อไฟล์ตรงกับรูปใน images, เป็น mask ขาวดำ
-val/images/...
-val/masks/...
-```
-
-Validation ประมาณ **หลักสิบรูป** ก็เพียงพอสำหรับ Demonstration ของระบบ Gate
-
-จากนั้นสร้าง Release ใหม่ tag `dataset-v1` แล้วแนบไฟล์ zip (วิธีเดียวกับ `models-v1` ใน Part 5)
-
-> **คำเตือน:** Repo Public = Dataset ก็เป็นสาธารณะด้วย ถ้า Dataset เป็นข้อมูลของบริษัท/โรงงาน **อย่าอัปโหลด** จนกว่าจะเปลี่ยน Repo เป็น Private หรือขออนุญาตเจ้าของข้อมูลแล้ว
-
----
-
-### 4. ทดสอบ Workflow
-
-หลังจากเติมทุกอย่างแล้ว ให้กลับไปที่:
-
-**GitHub → Actions → CT - Retrain & Evaluate → Run workflow**
-
-เมื่อทำงานเสร็จ ให้ดูที่หน้า **Summary**
-
-`evaluate.py` จะสร้างผลลัพธ์เปรียบเทียบ Dice Score และระบุว่า:
-
-```text
-PASS
-```
-
-หรือ
-
-```text
-FAIL
+```bash
+python training/evaluate.py --current models/defect_model.h5 --candidate training/output/candidate_defect_model.h5 --data-dir "D:/MODEL R2U-NET/pipe_staple"
 ```
 
 ---
@@ -611,7 +531,7 @@ Download Candidate Model
    ↓
 ตรวจสอบโมเดลด้วยตัวเอง
    ↓
-นำไปแทนที่โมเดลใน models/
+นำไปแทนที่โมเดลใน models/ และอัปแทนใน Release models-v1
    ↓
 สร้าง Version Tag
    ↓
@@ -670,22 +590,22 @@ Build .exe Release
 * [ ] รัน `supabase/migrations/001_local_id_dedup.sql` ใน Supabase SQL Editor
 * [ ] (ไม่บังคับ) แก้เวลาข้อมูลเก่าที่เพี้ยน 7 ชม. (คำสั่งท้ายไฟล์ migration)
 * [ ] `pip install -r requirements.txt` ใหม่ (ล็อกเวอร์ชันแล้ว)
-* [ ] Commit + Push แล้วดูว่า CI และ Dashboard CI เป็นสีเขียว
+* [/] Commit + Push แล้วดูว่า CI และ Dashboard CI เป็นสีเขียว
 
 ### Desktop CD
 
-* [ ] อัปโหลดโมเดล 2 ไฟล์ไปที่ Release `models-v1`
-* [ ] (ไม่บังคับ) ตั้ง Secrets `SUPABASE_URL` / `SUPABASE_ANON_KEY`
-* [ ] สร้าง Tag เช่น `v1.0.0`
-* [ ] Push Tag ขึ้น GitHub
-* [ ] `CD - Build & Release Desktop App` ทำงานสำเร็จ
+* [/] อัปโหลดโมเดล 2 ไฟล์ไปที่ Release `models-v1`
+* [/] (ไม่บังคับ) ตั้ง Secrets `SUPABASE_URL` / `SUPABASE_ANON_KEY`
+* [/] สร้าง Tag เช่น `v1.0.0`
+* [/] Push Tag ขึ้น GitHub
+* [/] `CD - Build & Release Desktop App` ทำงานสำเร็จ
 * [ ] ตรวจสอบ `.exe` ใน GitHub Releases
 
 ### CT / Retraining
 
-* [ ] ใส่ R2U-Net Architecture จริงใน `build_model()`
-* [ ] ใส่ Data Loader จริงใน `load_training_data()`
-* [ ] เตรียม Dataset zip แล้วอัปโหลดไปที่ Release `dataset-v1`
-* [ ] ทดสอบ `CT - Retrain & Evaluate`
-* [ ] ตรวจสอบ Dice Score
+* [/] R2U-Net จริง + การแบ่งข้อมูลแบบไม่ซ้ำกัน (`training/`)
+* [/] เทรนโมเดลใหม่ด้วยโน้ตบุ๊ก แล้วใส่เป็น `models/defect_model.h5`
+* [ ] อัปโมเดลใหม่แทน `defect_model.h5` ใน Release `models-v1`
+* [ ] อัปโหลด `defect_dataset.zip` ไปที่ Release `dataset-v1`
+* [ ] กด Run `CT - Retrain & Evaluate` แล้วดูตารางใน Summary
 * [ ] ตรวจสอบ Candidate Model ด้วยตัวเองก่อนนำไป Production

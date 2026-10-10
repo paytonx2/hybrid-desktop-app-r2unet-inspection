@@ -46,7 +46,7 @@ r2unet_desktop_final/
 │   └── utils.py                    ← แปลงภาพ OpenCV → Qt
 
 ├── tests/                          ← Unit tests (รันใน CI ทุกครั้งที่ push)
-├── training/                       ← CT: retrain.py (scaffold) + evaluate.py (gate)
+├── training/                       ← CT: R2U-Net, retrain.py (เทรน) + evaluate.py (gate)
 ├── dashboard/                      ← Next.js Web Dashboard (deploy ด้วย Vercel)
 ├── supabase/
 │   ├── schema.sql                  ← Schema สำหรับ Project ใหม่
@@ -178,6 +178,23 @@ Models ready
 ```bash
 pytest tests/ -v
 ```
+
+### ประสิทธิภาพของโมเดล Pipe Staple (`models/defect_model.h5`)
+
+R2U-Net ขนาด input 128x128 (2.46 ล้านพารามิเตอร์) เทรนด้วย AutoVI `pipe_staple` แบ่งข้อมูลแบบไม่ซ้ำกัน
+ผลบน **test set ที่โมเดลไม่เคยเห็น** (188 good + 24 missing) วัดด้วยโค้ดของแอปเอง ค่าตั้งต้น Confidence 0.35 / Pixel Threshold 500:
+
+| ตัววัด | ผล |
+|---|---|
+| Recall (จับชิ้นที่หายได้) | 0.958 (23/24) |
+| Specificity (ของดีผ่าน) | 1.000 (188/188) |
+| Precision | 1.000 |
+| Dice เฉลี่ย (ภาพที่มี defect) | 0.876 |
+| IoU เฉลี่ย (ภาพที่มี defect) | 0.808 |
+| ความเร็ว (CPU, รวม preprocessing) | ~31 ms/ภาพ |
+
+ภาพที่พลาด 1 ภาพ (`test/missing/0012.png`) มีลักษณะต่างจากภาพอื่นทั้งหมดในชุดข้อมูล (ชิ้นส่วนสีขาวสว่างทับตำแหน่ง defect) และไม่มีภาพแบบนี้ในชุดเทรน
+เทรนซ้ำได้ด้วย `training/retrain.py` หรือ CT workflow (ดู `training/README.md`)
 
 ---
 

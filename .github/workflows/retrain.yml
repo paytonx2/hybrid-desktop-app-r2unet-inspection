@@ -9,8 +9,9 @@ name: CT - Retrain & Evaluate Candidate Model
 #   - "models-v1" release with both production .h5 files (same one the
 #     CD workflow uses)
 #   - "dataset-v1" release with defect_dataset.zip and/or
-#     tank_screw_dataset.zip, each containing train/ and val/ folders
-#     laid out as described in training/README.md
+#     tank_screw_dataset.zip: one AutoVI category each, zipped so that
+#     train/, test/ and ground_truth/ are at the top level of the zip
+#     (see training/README.md)
 on:
   workflow_dispatch:
     inputs:
@@ -23,9 +24,9 @@ on:
           - defect
           - tank_screw
       epochs:
-        description: 'Training epochs'
+        description: 'Max training epochs (EarlyStopping usually stops earlier)'
         required: false
-        default: '5'
+        default: '80'
 
 env:
   MODELS_RELEASE_TAG: models-v1
@@ -34,6 +35,7 @@ env:
 jobs:
   retrain-and-evaluate:
     runs-on: ubuntu-latest
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
@@ -68,39 +70,46 @@ jobs:
           gh release download "$MODELS_RELEASE_TAG" --pattern "${{ steps.model.outputs.file }}" --dir models --clobber \
             || { echo "::error::Upload ${{ steps.model.outputs.file }} to the '$MODELS_RELEASE_TAG' GitHub Release first (CICTCD_SETUP.md Part 5)."; exit 1; }
 
-      - name: Fetch training & validation data
+      - name: Fetch dataset (AutoVI layout)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           zip_name="${{ inputs.model_target }}_dataset.zip"
+          data_dir="training/data/${{ inputs.model_target }}"
           gh release download "$DATASET_RELEASE_TAG" --pattern "$zip_name" --dir /tmp/dataset \
             || { echo "::error::Upload $zip_name to the '$DATASET_RELEASE_TAG' GitHub Release first (CICTCD_SETUP.md Part 6)."; exit 1; }
-          mkdir -p training/data
-          unzip -q "/tmp/dataset/$zip_name" -d training/data
-          for d in train/images train/masks val/images val/masks; do
-            [ -d "training/data/$d" ] || { echo "::error::$zip_name must contain $d/ at its top level (see training/README.md)."; exit 1; }
+          mkdir -p "$data_dir"
+          unzip -q "/tmp/dataset/$zip_name" -d "$data_dir"
+          for d in train/good test/good test/missing ground_truth/missing; do
+            [ -d "$data_dir/$d" ] || { echo "::error::$zip_name must contain $d/ at its top level (see training/README.md)."; exit 1; }
           done
+          echo "missing images: $(ls "$data_dir/test/missing" | wc -l), good: $(ls "$data_dir/train/good" | wc -l) train + $(ls "$data_dir/test/good" | wc -l) test"
 
       - name: Retrain candidate model
         run: |
           python training/retrain.py \
-            --train-dir training/data/train \
+            --data-dir training/data/${{ inputs.model_target }} \
             --epochs ${{ inputs.epochs }} \
             --output training/output/candidate_${{ steps.model.outputs.file }}
 
-      - name: Evaluate candidate vs current production model
+      - name: Evaluate candidate vs current production model (gate)
         run: |
           python training/evaluate.py \
             --current models/${{ steps.model.outputs.file }} \
             --candidate training/output/candidate_${{ steps.model.outputs.file }} \
-            --val-dir training/data/val
+            --data-dir training/data/${{ inputs.model_target }} \
+            --report training/output/evaluation.json
 
-      - name: Upload candidate model for human review
+      - name: Upload candidate model and reports for human review
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: candidate-${{ inputs.model_target }}-model
-          path: training/output/candidate_${{ steps.model.outputs.file }}
+          path: |
+            training/output/candidate_${{ steps.model.outputs.file }}
+            training/output/evaluation.json
+            training/output/history.csv
+            training/output/split.csv
           if-no-files-found: warn
 
       # NOTE: there is deliberately no step here that copies the candidate

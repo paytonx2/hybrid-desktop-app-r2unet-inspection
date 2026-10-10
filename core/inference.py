@@ -56,4 +56,5 @@ def run_inference(img_bgr, model, conf_threshold=0.35, px_threshold=500):
         'status': status,
         'pixel_count': pixel_count,
         'result_bgr': result_bgr,
+        'mask': mask_full,  # binary mask at original size (used by training/evaluate.py)
     }
